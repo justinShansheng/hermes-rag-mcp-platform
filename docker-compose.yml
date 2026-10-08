@@ -1,13 +1,40 @@
 version: "3.9"
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hermes-postgres
+    environment:
+      POSTGRES_DB: hermes
+      POSTGRES_USER: hermes
+      POSTGRES_PASSWORD: hermes
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: hermes-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  redis:
+    image: redis:7-alpine
+    container_name: hermes-redis
+    ports:
+      - "6379:6379"
+
   ollama:
     image: ollama/ollama:latest
     container_name: hermes-ollama
     ports:
       - "11434:11434"
     volumes:
-      - ollama-data:/root/.ollama
+      - ollama_data:/root/.ollama
 
   backend:
     build:
@@ -15,12 +42,16 @@ services:
     container_name: hermes-backend
     ports:
       - "8001:8001"
-    env_file:
-      - .env
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
       - HERMES_API_URL=http://host.docker.internal:8000
+      - API_KEY=demo-key
+      - POSTGRES_URL=postgresql://hermes:hermes@postgres:5432/hermes
+      - QDRANT_URL=http://qdrant:6333
     depends_on:
+      - postgres
+      - qdrant
+      - redis
       - ollama
 
   frontend:
@@ -33,4 +64,6 @@ services:
       - backend
 
 volumes:
-  ollama-data:
+  postgres_data:
+  qdrant_data:
+  ollama_data:
