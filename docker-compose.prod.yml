@@ -5,6 +5,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: hermes-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: hermes
       POSTGRES_USER: hermes
@@ -23,6 +24,7 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     container_name: hermes-qdrant
+    restart: unless-stopped
     ports:
       - "6333:6333"
       - "6334:6334"
@@ -37,6 +39,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: hermes-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -48,6 +51,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: hermes-ollama
+    restart: unless-stopped
     ports:
       - "11434:11434"
     volumes:
@@ -60,6 +64,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: hermes-backend
+    restart: unless-stopped
     ports:
       - "8001:8001"
     environment:
@@ -79,20 +84,32 @@ services:
         condition: service_healthy
       ollama:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: hermes-frontend
+    restart: unless-stopped
     ports:
       - "5173:5173"
     environment:
       - VITE_API_URL=http://localhost:8001
     depends_on:
       - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5173"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:
   qdrant_data:
   ollama_data:
+
