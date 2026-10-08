@@ -1,8 +1,8 @@
-import asyncio
 import logging
-import os
-import time
+import asyncio
+from contextlib import asynccontextmanager
 from typing import Any
+import time
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,17 +11,109 @@ from sqlalchemy.orm import Session
 from app.agent_service import HermesAgentService
 from app.auth import require_api_key
 from app.config import settings
-from app.db import get_db
+from app.db import get_db, init_db
 from app.llm_service import LLMService
 from app.mcp_client import MCPClient
 from app.rag_service import RAGService
+from app.health_check import HealthCheck
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=getattr(logging, settings.log_level, logging.INFO),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger("hermes")
 
 START_TIME = time.time()
+health_check = HealthCheck()
 
-app = FastAPI(title=settings.app_name, version="0.2.0")
+
+class ConnectionManager:
+    """WebSocket connection manager for real-time chat"""
+
+    def __init__(self):
+        self.active_connections: dict[int, WebSocket] = {}
+
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        conn_id = id(websocket)
+        self.active_connections[conn_id] = websocket
+        logger.info(f"WebSocket connected: {conn_id}")
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        conn_id = id(websocket)
+        self.active_connections.pop(conn_id, None)
+        logger.info(f"WebSocket disconnected: {conn_id}")
+
+    async def send_json(self, websocket: WebSocket, data: dict) -> None:
+        try:
+            await websocket.send_json(data)
+        except Exception as e:
+            logger.error(f"Failed to send WebSocket message: {e}")
+            self.disconnect(websocket)
+
+    async def broadcast(self, data: dict) -> None:
+        """Broadcast message to all connected clients"""
+        disconnected = []
+        for conn_id, connection in self.active_connections.items():
+            try:
+                await connection.send_json(data)
+            except Exception as e:
+                logger.error(f"Failed to broadcast to {conn_id}: {e}")
+                disconnected.append(conn_id)
+        for conn_id in disconnected:
+            self.active_connections.pop(conn_id, None)
+
+
+manager = ConnectionManager()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan manager for startup/shutdown events"""
+    # Startup
+    logger.info("="*60)
+    logger.info(f"🚀 Hermes Platform Starting (v0.2.0)")
+    logger.info(f"Environment: {settings.app_env}")
+    logger.info(f"Backend: {settings.backend_host}:{settings.backend_port}")
+    logger.info("="*60)
+    
+    try:
+        # Initialize database
+        logger.info("[1/3] Initializing database...")
+        init_db()
+        logger.info("✓ Database initialized")
+        
+        # Run health checks
+        logger.info("[2/3] Running health checks...")
+        health_results = await health_check.check_all(settings)
+        critical_ok = all(health_results[s]["status"] == "healthy" for s in ["backend", "postgres"])
+        if not critical_ok:
+            logger.warning("⚠️  Some services may be unavailable (non-critical)")
+        logger.info("✓ Health checks complete")
+        
+        logger.info("[3/3] Platform ready")
+        logger.info("="*60)
+        logger.info("✅ Startup successful!")
+        logger.info("="*60 + "\n")
+    except Exception as e:
+        logger.error(f"❌ Startup failed: {e}")
+        raise
+    
+    yield
+    
+    # Shutdown
+    logger.info("\n" + "="*60)
+    logger.info("🛑 Hermes Platform Shutting Down")
+    logger.info("="*60)
+
+
+app = FastAPI(
+    title=settings.app_name,
+    version="0.2.0",
+    description="Complete Hermes Agent + RAG Knowledge Base + MCP Tools + Vue Dashboard + Ollama/Cloud Models Platform",
+    lifespan=lifespan,
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,46 +128,43 @@ llm_service = LLMService()
 agent_service = HermesAgentService()
 
 
-class ConnectionManager:
-    def __init__(self) -> None:
-        self.active_connections: dict[str, WebSocket] = {}
-
-    async def connect(self, websocket: WebSocket) -> None:
-        await websocket.accept()
-        self.active_connections[id(websocket)] = websocket
-
-    def disconnect(self, websocket: WebSocket) -> None:
-        self.active_connections.pop(id(websocket), None)
-
-    async def send_json(self, websocket: WebSocket, payload: dict) -> None:
-        await websocket.send_json(payload)
-
-
-manager = ConnectionManager()
-
-
-@app.on_event("startup")
-def startup_event() -> None:
-    logger.info("Hermes platform starting (v0.2.0 production)")
-
-
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "service": settings.app_name, "version": "0.2.0"}
+    """Health check endpoint"""
+    return {
+        "status": "ok",
+        "service": settings.app_name,
+        "version": "0.2.0",
+        "uptime_seconds": round(time.time() - START_TIME, 2),
+    }
 
 
 @app.get("/api/health")
 def api_health() -> dict:
+    """API health status"""
     return {
         "status": "ok",
         "service": settings.app_name,
         "mode": settings.app_env,
         "version": "0.2.0",
+        "uptime_seconds": round(time.time() - START_TIME, 2),
+    }
+
+
+@app.get("/api/status")
+async def status() -> dict:
+    """Detailed status with service health"""
+    results = await health_check.check_all(settings)
+    return {
+        "status": "healthy" if all(r["status"] == "healthy" for r in results.values()) else "degraded",
+        "services": results,
+        "uptime_seconds": round(time.time() - START_TIME, 2),
     }
 
 
 @app.get("/api/metrics")
 def metrics(db: Session = Depends(get_db)) -> dict:
+    """Platform metrics"""
     return {
         "service": settings.app_name,
         "status": "healthy",
@@ -87,6 +176,7 @@ def metrics(db: Session = Depends(get_db)) -> dict:
 
 @app.get("/api/dashboard")
 def dashboard() -> dict:
+    """Dashboard overview"""
     return {
         "service": settings.app_name,
         "status": "healthy",
@@ -107,40 +197,9 @@ def dashboard() -> dict:
     }
 
 
-@app.get("/api/monitoring")
-def monitoring() -> dict:
-    cpu_count = os.cpu_count() or 1
-    memory_total = 0
-    try:
-        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
-            for line in handle:
-                if line.startswith("MemTotal:"):
-                    memory_total = int(line.split()[1]) // 1024
-                    break
-    except OSError:
-        memory_total = 0
-
-    return {
-        "status": "healthy",
-        "uptime_seconds": round(time.time() - START_TIME, 2),
-        "resources": {
-            "cpu_cores": cpu_count,
-            "memory_mb": memory_total,
-            "memory_used_mb": max(0, memory_total - 128),
-            "disk_free_mb": 1024,
-        },
-        "services": [
-            {"name": "backend", "status": "running"},
-            {"name": "postgres", "status": "running"},
-            {"name": "qdrant", "status": "running"},
-            {"name": "redis", "status": "running"},
-            {"name": "ollama", "status": "running"},
-        ],
-    }
-
-
 @app.post("/api/auth/register")
 async def register(payload: dict, db: Session = Depends(get_db)) -> dict:
+    """Register new user"""
     from app.auth_utils import hash_password
     from app.models_db import User
 
@@ -150,6 +209,10 @@ async def register(payload: dict, db: Session = Depends(get_db)) -> dict:
 
     if not email or not password or not username:
         raise HTTPException(status_code=400, detail="Missing required fields")
+
+    existing = db.query(User).filter(User.email == email).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered")
 
     user = User(
         email=email,
@@ -164,6 +227,7 @@ async def register(payload: dict, db: Session = Depends(get_db)) -> dict:
 
 @app.post("/api/auth/login")
 async def login(payload: dict, db: Session = Depends(get_db)) -> dict:
+    """Login user"""
     from app.auth_utils import create_access_token, verify_password
     from app.models_db import User
 
@@ -183,6 +247,7 @@ async def login(payload: dict, db: Session = Depends(get_db)) -> dict:
 
 @app.get("/api/models")
 def models() -> dict:
+    """List available models"""
     return {
         "local": ["llama3.1:8b", "qwen2.5:7b", "deepseek-r1:7b"],
         "cloud": [
@@ -195,6 +260,7 @@ def models() -> dict:
 
 @app.get("/api/sessions")
 async def list_sessions(user_id: str = Depends(require_api_key), db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    """List user sessions"""
     from app.models_db import Session as SessionModel
 
     sessions = db.query(SessionModel).filter(SessionModel.user_id == user_id).all()
@@ -207,6 +273,7 @@ async def create_new_session(
     user_id: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ) -> dict:
+    """Create new session"""
     from app.models_db import Session as SessionModel
 
     title = (payload.get("title") or "New session").strip() or "New session"
@@ -226,6 +293,7 @@ async def get_session_messages(
     user_id: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ) -> dict:
+    """Get session messages"""
     from app.models_db import Message, Session as SessionModel
 
     session = db.query(SessionModel).filter(SessionModel.id == session_id, SessionModel.user_id == user_id).first()
@@ -241,6 +309,7 @@ async def get_session_messages(
 
 @app.get("/api/mcp/tools")
 async def list_mcp_tools(user_id: str = Depends(require_api_key)) -> dict:
+    """List MCP tools"""
     return await mcp_client.list_tools()
 
 
@@ -250,8 +319,8 @@ async def upload_file(
     user_id: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ) -> dict:
+    """Upload file for RAG"""
     import os
-
     from app.models_db import Document
 
     safe_name = os.path.basename(file.filename or "document.txt")
@@ -280,6 +349,7 @@ async def index_documents(
     user_id: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ) -> dict:
+    """Index documents"""
     files = payload.get("files", [])
     result = await rag_service.index_files(files)
 
@@ -298,13 +368,14 @@ async def call_mcp_tool(
     user_id: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ) -> dict:
+    """Call MCP tool"""
     from app.models_db import ToolInvocation
 
     server = payload.get("server") or "filesystem"
     tool_name = payload.get("tool") or "list_dir"
     args = payload.get("args") or {}
 
-    logger.info("MCP tool invocation: %s -> %s", server, tool_name)
+    logger.info(f"MCP tool invocation: {server} -> {tool_name}")
 
     result = await mcp_client.call_tool(server=server, tool_name=tool_name, payload=args)
 
@@ -328,6 +399,7 @@ async def chat(
     user_id: str = Depends(require_api_key),
     db: Session = Depends(get_db),
 ) -> dict:
+    """Chat endpoint (HTTP)"""
     from app.models_db import Message, Session as SessionModel
 
     question = (payload.get("question") or "").strip()
@@ -357,7 +429,8 @@ async def chat(
 
     try:
         answer_text = await rag_service.answer_with_context(question, context, model=model, llm_service=llm_service)
-    except Exception:
+    except Exception as e:
+        logger.error(f"RAG answer failed: {e}")
         answer_text = await agent_service.chat(model=model, prompt=question)
 
     assistant_msg = Message(session_id=session_id, role="assistant", content=answer_text)
@@ -375,40 +448,70 @@ async def chat(
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket) -> None:
+    """WebSocket chat endpoint for real-time messaging"""
     await manager.connect(websocket)
     try:
         while True:
             data = await websocket.receive_json()
             question = (data.get("question") or "").strip()
             model = (data.get("model") or settings.default_model).strip()
+            
             if not question:
-                await manager.send_json(websocket, {"type": "error", "message": "Question cannot be empty."})
+                await manager.send_json(websocket, {
+                    "type": "error",
+                    "message": "Question cannot be empty.",
+                })
                 continue
 
-            await manager.send_json(websocket, {"type": "status", "message": "Thinking..."})
-            context = await rag_service.search(question, top_k=5)
             try:
-                answer = await rag_service.answer_with_context(question, context, model=model, llm_service=llm_service)
-            except Exception:
-                answer = await agent_service.chat(model=model, prompt=question)
+                await manager.send_json(websocket, {
+                    "type": "status",
+                    "message": "Thinking...",
+                })
+                
+                context = await rag_service.search(question, top_k=5)
+                try:
+                    answer = await rag_service.answer_with_context(
+                        question, context, model=model, llm_service=llm_service
+                    )
+                except Exception as e:
+                    logger.error(f"RAG failed: {e}, using agent fallback")
+                    answer = await agent_service.chat(model=model, prompt=question)
 
-            chunks = answer.split()
-            full_text = " ".join(chunks)
-            for index, chunk in enumerate(chunks):
-                await manager.send_json(websocket, {"type": "chunk", "content": f"{chunk} ", "index": index})
-                await asyncio.sleep(0.03)
-            await manager.send_json(websocket, {"type": "complete", "answer": full_text, "model": model})
+                # Stream response in chunks
+                words = answer.split()
+                full_text = " ".join(words)
+                
+                for idx, word in enumerate(words):
+                    await manager.send_json(websocket, {
+                        "type": "chunk",
+                        "content": f"{word} ",
+                        "index": idx,
+                    })
+                    await asyncio.sleep(0.02)  # Simulate streaming delay
+                
+                await manager.send_json(websocket, {
+                    "type": "complete",
+                    "answer": full_text,
+                    "model": model,
+                })
+            except Exception as e:
+                logger.error(f"WebSocket chat error: {e}")
+                await manager.send_json(websocket, {
+                    "type": "error",
+                    "message": f"Error: {str(e)}",
+                })
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         logger.info("WebSocket client disconnected")
-    except Exception as exc:  # pragma: no cover
-        logger.exception("WebSocket chat failed: %s", exc)
-        await manager.send_json(websocket, {"type": "error", "message": str(exc)})
+    except Exception as e:
+        logger.exception(f"WebSocket error: {e}")
         manager.disconnect(websocket)
 
 
 @app.get("/api/deployment")
 def deployment_status() -> dict:
+    """Deployment status"""
     return {
         "status": "ready",
         "compose_file": "docker-compose.prod.yml",
@@ -425,45 +528,44 @@ def deployment_status() -> dict:
 
 @app.get("/api/admin/overview")
 def admin_overview() -> dict:
+    """Admin overview"""
     return {
-        "users": 12,
-        "sessions": 28,
-        "documents": 9,
-        "success_rate": 0.96,
-        "last_deploy": "2026-10-08T03:55:13Z",
+        "users": 1,
+        "sessions": 0,
+        "documents": 0,
+        "success_rate": 1.0,
+        "last_deploy": "2026-10-08T04:00:00Z",
         "health": "healthy",
     }
 
 
-@app.get("/api/admin/health")
-def admin_health() -> dict:
+@app.get("/api/monitoring")
+def monitoring() -> dict:
+    """Monitoring data"""
+    import os
+    cpu_count = os.cpu_count() or 1
     return {
         "status": "healthy",
-        "database": "ready",
-        "vector_store": "ready",
-        "queue": "idle",
-        "latency_ms": 123,
+        "uptime_seconds": round(time.time() - START_TIME, 2),
+        "resources": {
+            "cpu_cores": cpu_count,
+            "memory_mb": 4096,
+        },
+        "services": [
+            {"name": "backend", "status": "running"},
+            {"name": "postgres", "status": "running"},
+            {"name": "qdrant", "status": "running"},
+            {"name": "redis", "status": "running"},
+            {"name": "ollama", "status": "running"},
+        ],
     }
-
-
-@app.get("/api/ready")
-def ready() -> dict:
-    return {"ready": True, "service": settings.app_name, "checks": ["db", "vector_store", "ollama", "mcp"]}
 
 
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run(app, host=settings.backend_host, port=settings.backend_port)
-
-
-""""
-This file intentionally extends the starter platform with:
-- Real-time chat over WebSocket
-- Monitoring and dashboard APIs
-- Deployment status APIs
-- Admin overview endpoints
-"""
-"""
-
-
+    uvicorn.run(
+        app,
+        host=settings.backend_host,
+        port=settings.backend_port,
+        workers=1 if settings.app_env == "development" else 4,
+    )

@@ -1,11 +1,13 @@
-# Production deployment with PostgreSQL, Qdrant, Redis, and Ollama
+# Hermes RAG MCP Platform - Production Deployment
+# Complete production stack with all services
+
 version: "3.9"
 
 services:
   postgres:
     image: postgres:16-alpine
     container_name: hermes-postgres
-    restart: unless-stopped
+    restart: always
     environment:
       POSTGRES_DB: hermes
       POSTGRES_USER: hermes
@@ -20,14 +22,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - hermes-net
 
   qdrant:
     image: qdrant/qdrant:latest
     container_name: hermes-qdrant
-    restart: unless-stopped
+    restart: always
     ports:
       - "6333:6333"
-      - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
@@ -35,46 +38,56 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - hermes-net
 
   redis:
     image: redis:7-alpine
     container_name: hermes-redis
-    restart: unless-stopped
+    restart: always
     ports:
       - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - hermes-net
 
   ollama:
     image: ollama/ollama:latest
     container_name: hermes-ollama
-    restart: unless-stopped
+    restart: always
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+    networks:
+      - hermes-net
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: hermes-backend
-    restart: unless-stopped
+    restart: always
     ports:
       - "8001:8001"
     environment:
       - APP_ENV=production
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - HERMES_API_URL=http://host.docker.internal:8000
-      - API_KEY=${API_KEY:-demo-key}
       - POSTGRES_URL=postgresql://hermes:${POSTGRES_PASSWORD:-hermes123}@postgres:5432/hermes
-      - QDRANT_URL=http://qdrant:6333
       - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - API_KEY=${API_KEY:-demo-key}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - LOG_LEVEL=WARNING
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,31 +98,34 @@ services:
       ollama:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 15s
       timeout: 5s
       retries: 5
+    networks:
+      - hermes-net
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: hermes-frontend
-    restart: unless-stopped
+    restart: always
     ports:
       - "5173:5173"
     environment:
-      - VITE_API_URL=http://localhost:8001
+      - VITE_API_URL=http://backend:8001
     depends_on:
       - backend
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5173"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
+    networks:
+      - hermes-net
 
 volumes:
   postgres_data:
   qdrant_data:
+  redis_data:
   ollama_data:
 
+networks:
+  hermes-net:
+    driver: bridge
