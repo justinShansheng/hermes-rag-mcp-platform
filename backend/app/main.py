@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -95,6 +95,6 @@ async def chat(payload: dict) -> dict:
 @app.post("/api/mcp/call")
 async def call_mcp_tool(payload: dict) -> dict:
     server = payload.get("server") or "filesystem"
-    tool_name = payload.get("tool") or "list_files"
+    tool_name = payload.get("tool") or "list_dir"
     args = payload.get("args") or {}
     return await mcp_client.call_tool(server=server, tool_name=tool_name, payload=args)
