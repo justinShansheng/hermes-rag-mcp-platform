@@ -7,18 +7,9 @@ import httpx
 class MCPRegistry:
     def __init__(self):
         self.registry = {
-            "filesystem": {
-                "enabled": True,
-                "tools": ["list_dir", "read_file"],
-            },
-            "github": {
-                "enabled": True,
-                "tools": ["repo_info", "search_repo"],
-            },
-            "web_search": {
-                "enabled": True,
-                "tools": ["search"],
-            },
+            "filesystem": {"enabled": True, "tools": ["list_dir", "read_file"]},
+            "github": {"enabled": True, "tools": ["repo_info", "search_repo"]},
+            "web_search": {"enabled": True, "tools": ["search"]},
         }
 
     async def list_tools(self) -> dict[str, Any]:

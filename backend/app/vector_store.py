@@ -23,7 +23,6 @@ class VectorStore:
     def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         if self.vectorstore is None:
             return []
-
         results = self.vectorstore.similarity_search(query, k=top_k)
         return [
             {
@@ -37,10 +36,7 @@ class VectorStore:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as fh:
             content = fh.read()
         chunks = self.splitter.split_text(content)
-        return [
-            Document(page_content=chunk, metadata={"source": file_path})
-            for chunk in chunks
-        ]
+        return [Document(page_content=chunk, metadata={"source": file_path}) for chunk in chunks]
 
 
 class LocalVectorStore(VectorStore):

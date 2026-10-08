@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     sqlite_path: str = "./data/app.db"
     uploads_dir: str = "./data/uploads"
     qdrant_url: str = "http://localhost:6333"
+    qdrant_collection: str = "hermes_docs"
+    postgres_url: str = "postgresql://hermes:hermes@localhost:5432/hermes"
+    redis_url: str = "redis://localhost:6379/0"
 
     mcp_servers: dict = {
         "filesystem": {"enabled": True},

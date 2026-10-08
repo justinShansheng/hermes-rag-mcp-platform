@@ -1,30 +1,31 @@
 # Hermes RAG MCP Platform
 
-A production-oriented starter for building a complete AI workspace combining:
+Production-ready starter for building a complete AI workspace combining:
 - Hermes Agent
 - RAG knowledge base
 - MCP tools
 - Vue dashboard
-- local and cloud model routing
+- Ollama + cloud model routing
 
-## Features
+## Production architecture
 
-- FastAPI backend with auth and session persistence
+- FastAPI API layer
+- SQLite-backed session persistence
+- Local vector store abstraction with Qdrant-ready extension
+- central MCP registry
 - model router with Ollama + OpenRouter
-- SQLite-ready session storage and upload workflow
-- RAG indexing pipeline using vector store abstractions
-- central MCP registry for filesystem, GitHub, and web search
-- Docker Compose for local orchestration
+- Docker Compose deployment scaffold
 
-## Production roadmap
+## Included features
 
-- switch SQLite to PostgreSQL
-- move from local FAISS to Qdrant/Pinecone
-- add user RBAC and audit logs
-- add tool-call telemetry and metrics
-- deploy behind Nginx with TLS and secrets management
+- chat sessions
+- file upload and indexing
+- session storage
+- model switching
+- tool registry and invocation
+- health and metrics endpoints
 
-## Run locally
+## Local startup
 
 ```bash
 cd backend
@@ -44,18 +45,33 @@ npm run dev
 ollama serve
 ```
 
+## Production checklist
+
+- replace SQLite with PostgreSQL
+- replace local FAISS with Qdrant / Pinecone
+- add user RBAC and audit logging
+- add monitoring and API rate limiting
+- deploy behind Nginx + TLS
+- secure secrets via environment management
+
 ## Core endpoints
 
 - GET /health
+- GET /api/health
+- GET /api/metrics
 - GET /api/models
 - POST /api/chat
 - POST /api/rag/upload
 - POST /api/rag/index
+- GET /api/session
+- POST /api/sessions
 - GET /api/mcp/tools
 - POST /api/mcp/call
-- GET /api/sessions
-- POST /api/sessions
 
-## Next implementation target
+## Next implementation targets
 
-The current production scope is to move this from local prototype to enterprise-ready backend: persistent storage, Qdrant indexing, tool telemetry, and deployment automation.
+- PostgreSQL migration
+- Qdrant integration
+- real Hermes runtime orchestration
+- production tool execution telemetry
+- multi-user dashboard and authorization

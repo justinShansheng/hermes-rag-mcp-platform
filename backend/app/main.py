@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any
 
@@ -7,18 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.agent_service import HermesAgentService
 from app.auth import require_api_key
 from app.config import settings
-from app.database import (
-    append_message,
-    create_session,
-    get_messages,
-    get_session,
-    init_db,
-    list_sessions,
-    upsert_session_last_updated,
-)
+from app.database import append_message, create_session, get_messages, get_session, init_db, list_sessions, upsert_session_last_updated
 from app.llm_service import LLMService
 from app.mcp_client import MCPClient
 from app.rag_service import RAGService
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("hermes")
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 app.add_middleware(
@@ -30,13 +26,17 @@ app.add_middleware(
 )
 
 init_db()
-
 rag_service = RAGService()
 mcp_client = MCPClient()
 llm_service = LLMService()
 agent_service = HermesAgentService()
 UPLOAD_DIR = os.path.abspath(settings.uploads_dir)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@app.on_event("startup")
+def startup_event() -> None:
+    logger.info("Hermes platform starting")
 
 
 @app.get("/health")
@@ -47,6 +47,11 @@ def health() -> dict:
 @app.get("/api/health")
 def api_health() -> dict:
     return {"status": "ok", "service": settings.app_name, "mode": settings.app_env}
+
+
+@app.get("/api/metrics")
+def metrics() -> dict:
+    return {"service": settings.app_name, "status": "healthy", "model": settings.default_model}
 
 
 @app.post("/api/auth/token")
@@ -120,6 +125,7 @@ async def call_mcp_tool(payload: dict, _: Any = Depends(require_api_key)) -> dic
     server = payload.get("server") or "filesystem"
     tool_name = payload.get("tool") or "list_dir"
     args = payload.get("args") or {}
+    logger.info("MCP tool invocation: %s -> %s", server, tool_name)
     return await mcp_client.call_tool(server=server, tool_name=tool_name, payload=args)
 
 
