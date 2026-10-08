@@ -1,10 +1,13 @@
 import os
 from typing import Any
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agent_service import HermesAgentService
+from app.auth import require_api_key
 from app.config import settings
+from app.database import append_message, create_session, get_messages, get_session, init_db, list_sessions, upsert_session_last_updated
 from app.llm_service import LLMService
 from app.mcp_client import MCPClient
 from app.rag_service import RAGService
@@ -18,17 +21,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+init_db()
+
 rag_service = RAGService()
 mcp_client = MCPClient()
 llm_service = LLMService()
-
-UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploads"))
+agent_service = HermesAgentService()
+UPLOAD_DIR = os.path.abspath(settings.uploads_dir)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": settings.app_name}
+
+
+@app.get("/api/health")
+def api_health() -> dict:
+    return {"status": "ok", "service": settings.app_name, "mode": settings.app_env}
+
+
+@app.post("/api/auth/token")
+async def get_token(payload: dict) -> dict:
+    provided = (payload.get("api_key") or "").strip()
+    if not settings.api_key or provided == settings.api_key:
+        return {"token": settings.api_key or "demo-key"}
+    raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 @app.get("/api/models")
@@ -43,24 +61,44 @@ def models() -> dict:
     }
 
 
+@app.get("/api/sessions")
+async def sessions(_: Any = Depends(require_api_key)) -> list[dict[str, Any]]:
+    return list_sessions()
+
+
+@app.post("/api/sessions")
+async def create_new_session(payload: dict, _: Any = Depends(require_api_key)) -> dict:
+    title = (payload.get("title") or "New session").strip() or "New session"
+    model = payload.get("model") or settings.default_model
+    session_id = create_session(title=title, model=model)
+    return {"id": session_id, "title": title, "model": model}
+
+
+@app.get("/api/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, _: Any = Depends(require_api_key)) -> dict:
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"session": session, "messages": get_messages(session_id)}
+
+
 @app.get("/api/mcp/tools")
-async def list_mcp_tools() -> dict:
+async def list_mcp_tools(_: Any = Depends(require_api_key)) -> dict:
     return await mcp_client.list_tools()
 
 
 @app.post("/api/rag/index")
-async def index_documents(payload: dict) -> dict:
+async def index_documents(payload: dict, _: Any = Depends(require_api_key)) -> dict:
     files = payload.get("files", [])
     return await rag_service.index_files(files)
 
 
 @app.post("/api/rag/upload")
-async def upload_file(file: UploadFile = File(...)) -> dict:
+async def upload_file(file: UploadFile = File(...), _: Any = Depends(require_api_key)) -> dict:
     safe_name = os.path.basename(file.filename or "document.txt")
     path = os.path.join(UPLOAD_DIR, safe_name)
     with open(path, "wb") as fh:
-        content = await file.read()
-        fh.write(content)
+        fh.write(await file.read())
 
     return {
         "status": "uploaded",
@@ -69,32 +107,46 @@ async def upload_file(file: UploadFile = File(...)) -> dict:
     }
 
 
-@app.post("/api/chat")
-async def chat(payload: dict) -> dict:
-    question = (payload.get("question") or "").strip()
-    model = (payload.get("model") or settings.default_model).strip()
-    if not question:
-        return {"answer": "Question cannot be empty.", "context": [], "tools": {}}
-
-    context = await rag_service.search(question, top_k=5)
-    tools_status = await mcp_client.get_tools_status()
-
-    try:
-        answer = await rag_service.answer_with_context(question, context, model=model, llm_service=llm_service)
-    except Exception as exc:
-        answer = f"Model error: {exc}"
-
-    return {
-        "answer": answer,
-        "context": context,
-        "tools": tools_status,
-        "model": model,
-    }
-
-
 @app.post("/api/mcp/call")
-async def call_mcp_tool(payload: dict) -> dict:
+async def call_mcp_tool(payload: dict, _: Any = Depends(require_api_key)) -> dict:
     server = payload.get("server") or "filesystem"
     tool_name = payload.get("tool") or "list_dir"
     args = payload.get("args") or {}
     return await mcp_client.call_tool(server=server, tool_name=tool_name, payload=args)
+
+
+@app.post("/api/chat")
+async def chat(payload: dict, _: Any = Depends(require_api_key)) -> dict:
+    question = (payload.get("question") or "").strip()
+    model = (payload.get("model") or settings.default_model).strip()
+    session_id = payload.get("session_id")
+
+    if not question:
+        return {"answer": "Question cannot be empty.", "context": [], "tools": {}, "session_id": session_id}
+
+    if session_id:
+        session = get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+    else:
+        session_id = create_session(title=question[:48] or "New chat", model=model)
+
+    context = await rag_service.search(question, top_k=5)
+    tools_status = await mcp_client.get_tools_status()
+    append_message(session_id, "user", question)
+
+    try:
+        answer_text = await rag_service.answer_with_context(question, context, model=model, llm_service=llm_service)
+    except Exception:
+        answer_text = await agent_service.chat(model=model, prompt=question)
+
+    append_message(session_id, "assistant", answer_text)
+    upsert_session_last_updated(session_id)
+
+    return {
+        "answer": answer_text,
+        "context": context,
+        "tools": tools_status,
+        "model": model,
+        "session_id": session_id,
+    }

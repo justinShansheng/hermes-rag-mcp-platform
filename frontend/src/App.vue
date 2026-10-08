@@ -5,16 +5,19 @@
         <div class="brand-mark">H</div>
         <div>
           <h1>Hermes</h1>
-          <small>RAG MCP Platform</small>
+          <small>Production Console</small>
         </div>
       </div>
 
-      <nav class="nav">
-        <button :class="['nav-btn', currentTab === 'dashboard' ? 'active' : '']" @click="currentTab = 'dashboard'">Dashboard</button>
-        <button :class="['nav-btn', currentTab === 'kb' ? 'active' : '']" @click="currentTab = 'kb'">Knowledge Base</button>
-        <button :class="['nav-btn', currentTab === 'mcp' ? 'active' : '']" @click="currentTab = 'mcp'">MCP Tools</button>
-        <button :class="['nav-btn', currentTab === 'models' ? 'active' : '']" @click="currentTab = 'models'">Models</button>
-      </nav>
+      <div class="session-panel">
+        <h3>Sessions</h3>
+        <ul class="session-list">
+          <li v-for="session in sessions" :key="session.id" @click="openSession(session.id)">
+            {{ session.title }}
+          </li>
+        </ul>
+        <button class="secondary" @click="newSession">New Session</button>
+      </div>
     </aside>
 
     <main class="main-panel">
@@ -35,9 +38,16 @@
         </label>
       </header>
 
-      <section v-if="currentTab === 'dashboard'" class="panel chat-panel">
+      <section class="panel chat-panel">
         <div class="panel-header">
           <h3>Ask Hermes</h3>
+        </div>
+
+        <div v-if="messages.length" class="message-list">
+          <div v-for="message in messages" :key="message.id" :class="['message', message.role]">
+            <strong>{{ message.role === 'user' ? 'You' : 'Assistant' }}</strong>
+            <p>{{ message.content }}</p>
+          </div>
         </div>
 
         <textarea v-model="question" rows="5" placeholder="Ask about your documents, tools, or operations..." />
@@ -46,7 +56,7 @@
         </div>
       </section>
 
-      <section v-else-if="currentTab === 'kb'" class="panel">
+      <section class="panel">
         <div class="panel-header">
           <h3>Knowledge Base</h3>
         </div>
@@ -57,11 +67,11 @@
         </div>
 
         <div v-if="uploadInfo" class="mini-card">
-          <strong>Upload status:</strong> {{ uploadInfo }}
+          {{ uploadInfo }}
         </div>
       </section>
 
-      <section v-else-if="currentTab === 'mcp'" class="panel">
+      <section class="panel">
         <div class="panel-header">
           <h3>MCP Tools</h3>
         </div>
@@ -72,37 +82,6 @@
           </li>
         </ul>
       </section>
-
-      <section v-else-if="currentTab === 'models'" class="panel">
-        <div class="panel-header">
-          <h3>Available Models</h3>
-        </div>
-        <div class="model-grid">
-          <div class="model-card" v-for="model in modelList" :key="model">
-            {{ model }}
-          </div>
-        </div>
-      </section>
-
-      <section v-if="answer || context.length" class="panel result-panel">
-        <div class="panel-header">
-          <h3>Response</h3>
-        </div>
-
-        <div class="response-block">
-          <p>{{ answer || 'No answer yet.' }}</p>
-        </div>
-
-        <div v-if="context.length" class="context-block">
-          <h4>Retrieved Context</h4>
-          <ul>
-            <li v-for="item in context" :key="item.source">
-              <strong>{{ item.source }}</strong>
-              <p>{{ item.content }}</p>
-            </li>
-          </ul>
-        </div>
-      </section>
     </main>
   </div>
 </template>
@@ -111,37 +90,83 @@
 import { onMounted, ref } from 'vue'
 
 const question = ref('')
-const answer = ref('')
-const context = ref([])
 const selectedModel = ref('llama3.1:8b')
-const currentTab = ref('dashboard')
+const sessions = ref([])
+const messages = ref([])
+const currentSessionId = ref(null)
 const uploadInfo = ref('')
 const tools = ref([
   { name: 'filesystem', status: 'ready' },
   { name: 'github', status: 'ready' },
   { name: 'web_search', status: 'ready' },
 ])
-const modelList = ref([])
 let uploadedFiles = []
 
-async function fetchModels() {
-  const res = await fetch('http://localhost:8001/api/models')
+async function loadSessions() {
+  const res = await fetch('http://localhost:8001/api/sessions', {
+    headers: { Authorization: 'Bearer demo-key' },
+  })
   const data = await res.json()
-  modelList.value = [...(data.local || []), ...(data.cloud || [])]
+  sessions.value = data
+  if (data.length && !currentSessionId.value) {
+    currentSessionId.value = data[0].id
+    await loadMessages(data[0].id)
+  }
+}
+
+async function loadMessages(sessionId) {
+  const res = await fetch(`http://localhost:8001/api/sessions/${sessionId}/messages`, {
+    headers: { Authorization: 'Bearer demo-key' },
+  })
+  const data = await res.json()
+  messages.value = data.messages || []
+}
+
+async function newSession() {
+  const res = await fetch('http://localhost:8001/api/sessions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer demo-key',
+    },
+    body: JSON.stringify({ title: 'New session', model: selectedModel.value }),
+  })
+  const data = await res.json()
+  currentSessionId.value = data.id
+  await loadSessions()
+}
+
+async function openSession(sessionId) {
+  currentSessionId.value = sessionId
+  await loadMessages(sessionId)
 }
 
 async function sendQuestion() {
   if (!question.value.trim()) return
 
+  const payload = {
+    question: question.value,
+    model: selectedModel.value,
+    session_id: currentSessionId.value,
+  }
+
   const res = await fetch('http://localhost:8001/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: question.value, model: selectedModel.value }),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer demo-key',
+    },
+    body: JSON.stringify(payload),
   })
 
   const data = await res.json()
-  answer.value = data.answer || 'No answer.'
-  context.value = data.context || []
+  if (currentSessionId.value !== data.session_id && data.session_id) {
+    currentSessionId.value = data.session_id
+  }
+
+  await loadSessions()
+  await loadMessages(currentSessionId.value)
+  question.value = ''
 }
 
 async function handleUpload(event) {
@@ -153,6 +178,7 @@ async function handleUpload(event) {
 
   const res = await fetch('http://localhost:8001/api/rag/upload', {
     method: 'POST',
+    headers: { Authorization: 'Bearer demo-key' },
     body: formData,
   })
 
@@ -169,7 +195,10 @@ async function indexUploadedFiles() {
 
   const res = await fetch('http://localhost:8001/api/rag/index', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer demo-key',
+    },
     body: JSON.stringify({ files: uploadedFiles }),
   })
 
@@ -178,7 +207,7 @@ async function indexUploadedFiles() {
 }
 
 onMounted(() => {
-  fetchModels()
+  loadSessions()
 })
 </script>
 
@@ -201,7 +230,7 @@ onMounted(() => {
 }
 
 .sidebar {
-  width: 260px;
+  width: 280px;
   padding: 24px 18px;
   border-right: 1px solid rgba(148, 163, 184, 0.25);
   background: rgba(15, 23, 42, 0.8);
@@ -211,7 +240,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
 }
 
 .brand-mark {
@@ -234,25 +263,25 @@ onMounted(() => {
   color: #a5b4fc;
 }
 
-.nav {
+.session-panel h3 {
+  margin: 0 0 12px;
+}
+
+.session-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
-.nav-btn {
+.session-list li {
   background: rgba(148, 163, 184, 0.08);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: 10px;
-  color: #e2e8f0;
-  text-align: left;
   cursor: pointer;
-}
-
-.nav-btn.active {
-  background: rgba(99, 102, 241, 0.2);
-  border-color: rgba(129, 140, 248, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 .main-panel {
@@ -307,13 +336,31 @@ onMounted(() => {
   margin-bottom: 20px;
 }
 
-.panel-header {
-  margin-bottom: 12px;
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
-.panel-header h3,
-.panel-header h4 {
+.message {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(30, 41, 59, 0.7);
+}
+
+.message.user {
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.message strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.message p {
   margin: 0;
+  line-height: 1.5;
 }
 
 textarea {
@@ -352,27 +399,6 @@ textarea {
   color: white;
 }
 
-.response-block {
-  background: rgba(30, 41, 59, 0.8);
-  border-radius: 10px;
-  padding: 14px;
-  line-height: 1.6;
-}
-
-.context-block ul, .tool-list {
-  margin: 12px 0 0;
-  padding-left: 18px;
-}
-
-.context-block li, .tool-list li {
-  margin-bottom: 12px;
-}
-
-.context-block p {
-  margin: 6px 0 0;
-  color: #cbd5e1;
-}
-
 .mini-card {
   margin-top: 10px;
   padding: 12px;
@@ -380,21 +406,24 @@ textarea {
   border-radius: 8px;
 }
 
+.tool-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tool-list li {
+  background: rgba(30, 41, 59, 0.7);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+}
+
 .status.online {
   color: #34d399;
-  margin-left: 12px;
-}
-
-.model-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-}
-
-.model-card {
-  padding: 14px;
-  border-radius: 12px;
-  background: rgba(30, 41, 59, 0.7);
-  border: 1px solid rgba(148, 163, 184, 0.25);
 }
 </style>
