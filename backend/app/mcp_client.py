@@ -1,9 +1,12 @@
+import os
+from typing import Any
+
 import httpx
 
 
 class MCPClient:
     def __init__(self):
-        self.base_url = "http://localhost:3001"
+        self.base_url = os.getenv("MCP_SERVER_URL", "http://localhost:3001")
 
     async def list_tools(self) -> dict:
         try:
@@ -16,9 +19,9 @@ class MCPClient:
 
         return {
             "servers": [
-                {"name": "filesystem", "status": "not_connected"},
-                {"name": "github", "status": "not_connected"},
-                {"name": "web_search", "status": "not_connected"},
+                {"name": "filesystem", "status": "stubbed"},
+                {"name": "github", "status": "stubbed"},
+                {"name": "web_search", "status": "stubbed"},
             ]
         }
 
@@ -27,4 +30,13 @@ class MCPClient:
             "filesystem": True,
             "github": True,
             "web_search": True,
+        }
+
+    async def call_tool(self, server: str, tool_name: str, payload: dict[str, Any] | None = None) -> dict:
+        return {
+            "server": server,
+            "tool": tool_name,
+            "status": "stubbed",
+            "payload": payload or {},
+            "result": "MCP tool integration is ready for connector implementation.",
         }

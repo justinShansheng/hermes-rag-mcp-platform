@@ -4,15 +4,32 @@ A full-stack starter for combining:
 - Hermes Agent
 - RAG knowledge base
 - MCP tool integration
-- Vue control panel
+- Vue dashboard
 - Ollama + cloud model routing
+
+## Architecture
+
+```text
+Frontend (Vue 3 + Vite)
+        |
+        v
+FastAPI Backend
+        |
+   +---- RAG Layer (FAISS + embeddings)
+   +---- MCP Adapter
+   +---- LLM Router (Ollama / OpenRouter)
+        |
+        v
+Hermes Agent / local model / cloud model
+```
 
 ## Included
 
 - Python FastAPI backend
-- Vue 3 + Vite frontend
-- FAISS-based RAG store
-- MCP stub service layer
+- Vue 3 control panel
+- RAG indexing + similarity search
+- LLM routing for Ollama and OpenRouter
+- MCP adapter stub layer
 - Docker Compose setup
 
 ## Quick Start
@@ -39,6 +56,8 @@ npm install
 ollama serve
 ```
 
+If you want cloud models, create a `.env` file from `.env.example` and set `OPENROUTER_API_KEY`.
+
 ### 4) Start backend
 
 ```bash
@@ -55,18 +74,43 @@ npm run dev
 
 ### 6) Open UI
 
-Visit: http://localhost:5173
+Visit:
+- Frontend: http://localhost:5173
+- Backend docs: http://localhost:8001/docs
 
-## Notes
+## Example API calls
 
-- The backend expects a local Hermes server at `http://localhost:8000` for agent integration.
-- MCP endpoints are stubbed for easy extension.
-- You can replace the in-memory RAG service with vector DB or external knowledge services later.
+### Ask a question
 
-## Production extension ideas
+```bash
+curl -X POST http://localhost:8001/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is Hermes Agent?","model":"llama3.1:8b"}'
+```
 
-- Add persistent vector DB (Qdrant / Pinecone / Weaviate)
-- Add secure auth
-- Add file upload UI
-- Add real MCP servers for GitHub, Notion, filesystem, and web search
-- Add cloud model use via OpenRouter / OpenAI / Anthropic
+### Fetch available models
+
+```bash
+curl http://localhost:8001/api/models
+```
+
+### Index text files
+
+```bash
+curl -X POST http://localhost:8001/api/rag/index \
+  -H "Content-Type: application/json" \
+  -d '{"files":["/path/to/file.txt"]}'
+```
+
+## Production extensions
+
+- Add file upload endpoint and UI
+- Add real MCP servers (GitHub, filesystem, web search, Notion)
+- Add Qdrant or Pinecone persistence
+- Add auth + user management
+- Add model fallback policy
+- Add observability and metrics
+
+## Recommended next step
+
+The next upgrade is to connect the backend to a real Hermes Agent session and a real MCP server catalog, then expose those tools in the Vue dashboard as cards and actions.

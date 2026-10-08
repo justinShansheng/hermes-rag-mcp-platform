@@ -1,9 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.rag_service import RAGService
+from app.llm_service import LLMService
 from app.mcp_client import MCPClient
+from app.rag_service import RAGService
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 app.add_middleware(
@@ -16,6 +17,7 @@ app.add_middleware(
 
 rag_service = RAGService()
 mcp_client = MCPClient()
+llm_service = LLMService()
 
 
 @app.get("/health")
@@ -49,16 +51,21 @@ async def index_documents(payload: dict) -> dict:
 @app.post("/api/chat")
 async def chat(payload: dict) -> dict:
     question = (payload.get("question") or "").strip()
+    model = (payload.get("model") or settings.default_model).strip()
     if not question:
         return {"answer": "Question cannot be empty.", "context": [], "tools": {}}
 
     context = await rag_service.search(question, top_k=5)
     tools_status = await mcp_client.get_tools_status()
-    answer = await rag_service.answer_with_context(question, context)
+
+    try:
+        answer = await rag_service.answer_with_context(question, context, model=model, llm_service=llm_service)
+    except Exception as exc:
+        answer = f"Model error: {exc}"
 
     return {
         "answer": answer,
         "context": context,
         "tools": tools_status,
-        "model": settings.default_model,
+        "model": model,
     }

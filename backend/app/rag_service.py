@@ -58,15 +58,15 @@ class RAGService:
             for item in results
         ]
 
-    async def answer_with_context(self, question: str, context: List[dict]) -> str:
+    async def answer_with_context(self, question: str, context: List[dict], model: str = None, llm_service=None) -> str:
         if not context:
-            return "I don't have enough context in the knowledge base to answer this question yet."
+            return "I do not yet have enough grounded knowledge to answer this question. Add documents or connect an MCP tool."
 
         context_text = "\n\n".join(item["content"] for item in context)
         prompt = f"""
 You are Hermes Agent.
-Use the context below to answer the user's question.
-Be precise, grounded, and do not invent details.
+Use the context below to answer as accurately as possible.
+Do not invent facts.
 
 Context:
 {context_text}
@@ -74,4 +74,11 @@ Context:
 User question:
 {question}
 """
+
+        if llm_service is not None and model:
+            try:
+                return await llm_service.generate(model=model, prompt=prompt)
+            except Exception:
+                pass
+
         return prompt
