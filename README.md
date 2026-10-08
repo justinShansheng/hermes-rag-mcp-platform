@@ -1,116 +1,70 @@
 # Hermes RAG MCP Platform
 
-A full-stack starter for combining:
+A starter for building a complete AI workspace combining:
 - Hermes Agent
 - RAG knowledge base
-- MCP tool integration
+- MCP tool layer
 - Vue dashboard
 - Ollama + cloud model routing
 
-## Architecture
-
-```text
-Frontend (Vue 3 + Vite)
-        |
-        v
-FastAPI Backend
-        |
-   +---- RAG Layer (FAISS + embeddings)
-   +---- MCP Adapter
-   +---- LLM Router (Ollama / OpenRouter)
-        |
-        v
-Hermes Agent / local model / cloud model
-```
-
 ## Included
 
-- Python FastAPI backend
-- Vue 3 control panel
-- RAG indexing + similarity search
-- LLM routing for Ollama and OpenRouter
-- MCP adapter stub layer
-- Docker Compose setup
+- FastAPI backend
+- Vue 3 dashboard
+- Knowledge-base upload + indexing flow
+- MCP stub adapters
+- Local / cloud model routing
+- Docker Compose template
 
-## Quick Start
+## Run locally
 
-### 1) Install backend dependencies
+### 1) Backend
 
 ```bash
 cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-### 2) Install frontend dependencies
+### 2) Frontend
 
 ```bash
 cd frontend
 npm install
+npm run dev
 ```
 
-### 3) Start Ollama locally
+### 3) Ollama
 
 ```bash
 ollama serve
 ```
 
-If you want cloud models, create a `.env` file from `.env.example` and set `OPENROUTER_API_KEY`.
+### 4) Optional OpenRouter cloud access
 
-### 4) Start backend
+Set in `.env`:
 
-```bash
-cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+```env
+OPENROUTER_API_KEY=your_key_here
 ```
 
-### 5) Start frontend
+## Useful API endpoints
 
-```bash
-cd frontend
-npm run dev
-```
+- GET `/api/models`
+- POST `/api/chat`
+- POST `/api/rag/upload`
+- POST `/api/rag/index`
+- GET `/api/mcp/tools`
+- POST `/api/mcp/call`
 
-### 6) Open UI
+## Real-world next step
 
-Visit:
-- Frontend: http://localhost:5173
-- Backend docs: http://localhost:8001/docs
+The production-ready follow-up is to connect real MCP servers such as:
+- GitHub MCP
+- Filesystem MCP
+- Web Search MCP
+- Notion / Obsidian MCP
 
-## Example API calls
-
-### Ask a question
-
-```bash
-curl -X POST http://localhost:8001/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"question":"What is Hermes Agent?","model":"llama3.1:8b"}'
-```
-
-### Fetch available models
-
-```bash
-curl http://localhost:8001/api/models
-```
-
-### Index text files
-
-```bash
-curl -X POST http://localhost:8001/api/rag/index \
-  -H "Content-Type: application/json" \
-  -d '{"files":["/path/to/file.txt"]}'
-```
-
-## Production extensions
-
-- Add file upload endpoint and UI
-- Add real MCP servers (GitHub, filesystem, web search, Notion)
-- Add Qdrant or Pinecone persistence
-- Add auth + user management
-- Add model fallback policy
-- Add observability and metrics
-
-## Recommended next step
-
-The next upgrade is to connect the backend to a real Hermes Agent session and a real MCP server catalog, then expose those tools in the Vue dashboard as cards and actions.
+Then expose them through the Vue dashboard and route agent requests through Hermes plus a persistent vector store.

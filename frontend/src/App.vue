@@ -10,10 +10,10 @@
       </div>
 
       <nav class="nav">
-        <button class="nav-btn active">Dashboard</button>
-        <button class="nav-btn">Knowledge Base</button>
-        <button class="nav-btn">MCP Tools</button>
-        <button class="nav-btn">Models</button>
+        <button :class="['nav-btn', currentTab === 'dashboard' ? 'active' : '']" @click="currentTab = 'dashboard'">Dashboard</button>
+        <button :class="['nav-btn', currentTab === 'kb' ? 'active' : '']" @click="currentTab = 'kb'">Knowledge Base</button>
+        <button :class="['nav-btn', currentTab === 'mcp' ? 'active' : '']" @click="currentTab = 'mcp'">MCP Tools</button>
+        <button :class="['nav-btn', currentTab === 'models' ? 'active' : '']" @click="currentTab = 'models'">Models</button>
       </nav>
     </aside>
 
@@ -28,13 +28,14 @@
           <span>Model</span>
           <select v-model="selectedModel">
             <option value="llama3.1:8b">Ollama: llama3.1:8b</option>
+            <option value="qwen2.5:7b">Ollama: qwen2.5:7b</option>
             <option value="openrouter/gpt-4o-mini">Cloud: GPT-4o mini</option>
             <option value="openrouter/claude-3.5-sonnet">Cloud: Claude 3.5</option>
           </select>
         </label>
       </header>
 
-      <section class="panel chat-panel">
+      <section v-if="currentTab === 'dashboard'" class="panel chat-panel">
         <div class="panel-header">
           <h3>Ask Hermes</h3>
         </div>
@@ -42,6 +43,44 @@
         <textarea v-model="question" rows="5" placeholder="Ask about your documents, tools, or operations..." />
         <div class="actions">
           <button class="primary" @click="sendQuestion">Send</button>
+        </div>
+      </section>
+
+      <section v-else-if="currentTab === 'kb'" class="panel">
+        <div class="panel-header">
+          <h3>Knowledge Base</h3>
+        </div>
+
+        <div class="upload-box">
+          <input type="file" @change="handleUpload" />
+          <button class="secondary" @click="indexUploadedFiles">Index files</button>
+        </div>
+
+        <div v-if="uploadInfo" class="mini-card">
+          <strong>Upload status:</strong> {{ uploadInfo }}
+        </div>
+      </section>
+
+      <section v-else-if="currentTab === 'mcp'" class="panel">
+        <div class="panel-header">
+          <h3>MCP Tools</h3>
+        </div>
+        <ul class="tool-list">
+          <li v-for="tool in tools" :key="tool.name">
+            <span>{{ tool.name }}</span>
+            <span class="status online">{{ tool.status }}</span>
+          </li>
+        </ul>
+      </section>
+
+      <section v-else-if="currentTab === 'models'" class="panel">
+        <div class="panel-header">
+          <h3>Available Models</h3>
+        </div>
+        <div class="model-grid">
+          <div class="model-card" v-for="model in modelList" :key="model">
+            {{ model }}
+          </div>
         </div>
       </section>
 
@@ -69,12 +108,27 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 
 const question = ref('')
 const answer = ref('')
 const context = ref([])
 const selectedModel = ref('llama3.1:8b')
+const currentTab = ref('dashboard')
+const uploadInfo = ref('')
+const tools = ref([
+  { name: 'filesystem', status: 'ready' },
+  { name: 'github', status: 'ready' },
+  { name: 'web_search', status: 'ready' },
+])
+const modelList = ref([])
+let uploadedFiles = []
+
+async function fetchModels() {
+  const res = await fetch('http://localhost:8001/api/models')
+  const data = await res.json()
+  modelList.value = [...(data.local || []), ...(data.cloud || [])]
+}
 
 async function sendQuestion() {
   if (!question.value.trim()) return
@@ -82,13 +136,50 @@ async function sendQuestion() {
   const res = await fetch('http://localhost:8001/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: question.value }),
+    body: JSON.stringify({ question: question.value, model: selectedModel.value }),
   })
 
   const data = await res.json()
   answer.value = data.answer || 'No answer.'
   context.value = data.context || []
 }
+
+async function handleUpload(event) {
+  const file = event.target.files[0]
+  if (!file) return
+
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await fetch('http://localhost:8001/api/rag/upload', {
+    method: 'POST',
+    body: formData,
+  })
+
+  const data = await res.json()
+  uploadInfo.value = `${data.filename} uploaded successfully`
+  uploadedFiles.push(data.path)
+}
+
+async function indexUploadedFiles() {
+  if (!uploadedFiles.length) {
+    uploadInfo.value = 'No files uploaded yet.'
+    return
+  }
+
+  const res = await fetch('http://localhost:8001/api/rag/index', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files: uploadedFiles }),
+  })
+
+  const data = await res.json()
+  uploadInfo.value = `Indexed ${data.indexed || 0} document chunks.`
+}
+
+onMounted(() => {
+  fetchModels()
+})
 </script>
 
 <style scoped>
@@ -236,20 +327,29 @@ textarea {
   font: inherit;
 }
 
-.actions {
+.actions, .upload-box {
   margin-top: 12px;
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
 }
 
-.primary {
+.primary, .secondary {
   border: none;
-  background: linear-gradient(135deg, #8b5cf6, #06b6d4);
-  color: white;
   border-radius: 10px;
   padding: 12px 18px;
   font-weight: 600;
   cursor: pointer;
+}
+
+.primary {
+  background: linear-gradient(135deg, #8b5cf6, #06b6d4);
+  color: white;
+}
+
+.secondary {
+  background: rgba(71, 85, 105, 0.9);
+  color: white;
 }
 
 .response-block {
@@ -259,17 +359,42 @@ textarea {
   line-height: 1.6;
 }
 
-.context-block ul {
+.context-block ul, .tool-list {
   margin: 12px 0 0;
   padding-left: 18px;
 }
 
-.context-block li {
+.context-block li, .tool-list li {
   margin-bottom: 12px;
 }
 
 .context-block p {
   margin: 6px 0 0;
   color: #cbd5e1;
+}
+
+.mini-card {
+  margin-top: 10px;
+  padding: 12px;
+  background: rgba(30, 41, 59, 0.7);
+  border-radius: 8px;
+}
+
+.status.online {
+  color: #34d399;
+  margin-left: 12px;
+}
+
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.model-card {
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.25);
 }
 </style>
