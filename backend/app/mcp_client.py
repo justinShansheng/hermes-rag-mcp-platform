@@ -1,5 +1,5 @@
 import os
-from typing import Any
+from typing import Any, Dict, List
 
 import httpx
 
@@ -7,36 +7,104 @@ import httpx
 class MCPClient:
     def __init__(self):
         self.base_url = os.getenv("MCP_SERVER_URL", "http://localhost:3001")
+        self.registry = {
+            "filesystem": {
+                "enabled": True,
+                "tools": ["list_dir", "read_file"],
+            },
+            "github": {
+                "enabled": True,
+                "tools": ["repo_info", "search_repo"],
+            },
+            "web_search": {
+                "enabled": True,
+                "tools": ["search"],
+            },
+        }
 
     async def list_tools(self) -> dict:
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                response = await client.get(f"{self.base_url}/tools")
-                if response.status_code == 200:
-                    return response.json()
-        except Exception:
-            pass
-
-        return {
-            "servers": [
-                {"name": "filesystem", "status": "stubbed"},
-                {"name": "github", "status": "stubbed"},
-                {"name": "web_search", "status": "stubbed"},
-            ]
-        }
+        tools = []
+        for name, meta in self.registry.items():
+            tools.append({
+                "name": name,
+                "status": "ready" if meta.get("enabled") else "disabled",
+                "tools": meta.get("tools", []),
+            })
+        return {"servers": tools}
 
     async def get_tools_status(self) -> dict:
-        return {
-            "filesystem": True,
-            "github": True,
-            "web_search": True,
-        }
+        return {name: bool(meta.get("enabled")) for name, meta in self.registry.items()}
 
-    async def call_tool(self, server: str, tool_name: str, payload: dict[str, Any] | None = None) -> dict:
+    async def call_tool(self, server: str, tool_name: str, payload: Dict[str, Any] | None = None) -> dict:
+        payload = payload or {}
+
+        if server == "filesystem":
+            return await self._filesystem_tool(tool_name, payload)
+        if server == "github":
+            return await self._github_tool(tool_name, payload)
+        if server == "web_search":
+            return await self._web_search_tool(tool_name, payload)
+
         return {
             "server": server,
             "tool": tool_name,
-            "status": "stubbed",
-            "payload": payload or {},
-            "result": "MCP tool integration is ready for connector implementation.",
+            "status": "unsupported",
+            "result": "This MCP server is not yet implemented.",
+        }
+
+    async def _filesystem_tool(self, tool_name: str, payload: Dict[str, Any]) -> dict:
+        if tool_name == "list_dir":
+            base = payload.get("path", ".")
+            entries = []
+            for name in sorted(os.listdir(base)):
+                full = os.path.join(base, name)
+                entries.append({"name": name, "is_dir": os.path.isdir(full)})
+            return {"server": "filesystem", "tool": tool_name, "status": "ok", "result": entries}
+
+        if tool_name == "read_file":
+            file_path = payload.get("path")
+            if not file_path or not os.path.exists(file_path):
+                return {"server": "filesystem", "tool": tool_name, "status": "error", "result": "Missing file path."}
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as fh:
+                data = fh.read(2000)
+            return {"server": "filesystem", "tool": tool_name, "status": "ok", "result": data}
+
+        return {"server": "filesystem", "tool": tool_name, "status": "unsupported", "result": "Unsupported filesystem tool."}
+
+    async def _github_tool(self, tool_name: str, payload: Dict[str, Any]) -> dict:
+        repo = payload.get("repo") or "justinShansheng/hermes-rag-mcp-platform"
+
+        if tool_name == "repo_info":
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.get(f"https://api.github.com/repos/{repo}")
+                resp.raise_for_status()
+                return {"server": "github", "tool": tool_name, "status": "ok", "result": resp.json()}
+
+        if tool_name == "search_repo":
+            query = payload.get("query") or "hermes agent"
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.get("https://api.github.com/search/repositories", params={"q": query, "per_page": 5})
+                resp.raise_for_status()
+                return {"server": "github", "tool": tool_name, "status": "ok", "result": resp.json().get("items", [])}
+
+        return {"server": "github", "tool": tool_name, "status": "unsupported", "result": "Unsupported GitHub tool."}
+
+    async def _web_search_tool(self, tool_name: str, payload: Dict[str, Any]) -> dict:
+        if tool_name != "search":
+            return {"server": "web_search", "tool": tool_name, "status": "unsupported", "result": "Unsupported web search tool."}
+
+        query = payload.get("query") or "Hermes Agent"
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get("https://api.duckduckgo.com/", params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1})
+            resp.raise_for_status()
+            data = resp.json()
+        return {
+            "server": "web_search",
+            "tool": tool_name,
+            "status": "ok",
+            "result": {
+                "topic": data.get("Heading"),
+                "abstract": data.get("Abstract"),
+                "related_topics": data.get("RelatedTopics", [])[:5],
+            },
         }

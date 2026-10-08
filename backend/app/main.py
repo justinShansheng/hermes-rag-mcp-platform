@@ -7,7 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.agent_service import HermesAgentService
 from app.auth import require_api_key
 from app.config import settings
-from app.database import append_message, create_session, get_messages, get_session, init_db, list_sessions, upsert_session_last_updated
+from app.database import (
+    append_message,
+    create_session,
+    get_messages,
+    get_session,
+    init_db,
+    list_sessions,
+    upsert_session_last_updated,
+)
 from app.llm_service import LLMService
 from app.mcp_client import MCPClient
 from app.rag_service import RAGService

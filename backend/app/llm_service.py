@@ -16,7 +16,7 @@ class LLMService:
 
     async def _generate_via_ollama(self, model: str, prompt: str) -> str:
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
+            response = await client.post(
                 f"{self.ollama_base_url}/api/generate",
                 json={
                     "model": model,
@@ -25,8 +25,8 @@ class LLMService:
                     "options": {"temperature": 0.2},
                 },
             )
-            resp.raise_for_status()
-            data = resp.json()
+            response.raise_for_status()
+            data = response.json()
             return data.get("response", "")
 
     async def _generate_via_openrouter(self, model: str, prompt: str) -> str:
@@ -37,7 +37,6 @@ class LLMService:
             "Authorization": f"Bearer {self.openrouter_api_key}",
             "Content-Type": "application/json",
         }
-
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -45,11 +44,11 @@ class LLMService:
         }
 
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
+            response = await client.post(
                 f"{self.openrouter_base_url}/chat/completions",
                 headers=headers,
                 json=payload,
             )
-            resp.raise_for_status()
-            data = resp.json()
+            response.raise_for_status()
+            data = response.json()
             return data["choices"][0]["message"]["content"]

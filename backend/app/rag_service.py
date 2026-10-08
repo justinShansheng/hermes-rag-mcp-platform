@@ -1,6 +1,7 @@
 import os
-from typing import List
+from typing import Any, List
 
+import httpx
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
@@ -25,19 +26,19 @@ class RAGService:
     async def index_files(self, files: List[str]) -> dict:
         documents: List[Document] = []
 
-        for p in files:
-            path = os.path.abspath(p)
-            if not os.path.exists(path):
+        for path in files:
+            file_path = os.path.abspath(path)
+            if not os.path.exists(file_path):
                 continue
             try:
-                with open(path, "r", encoding="utf-8") as fh:
+                with open(file_path, "r", encoding="utf-8") as fh:
                     content = fh.read()
             except Exception:
                 continue
 
             chunks = self.splitter.split_text(content)
             for chunk in chunks:
-                documents.append(Document(page_content=chunk, metadata={"source": path}))
+                documents.append(Document(page_content=chunk, metadata={"source": file_path}))
 
         if not documents:
             return {"indexed": 0, "status": "no_documents"}

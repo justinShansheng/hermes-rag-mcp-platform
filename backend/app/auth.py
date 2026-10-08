@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import settings
@@ -10,7 +10,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 async def require_api_key(
     request: Request,
-    creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    creds: Optional[HTTPAuthorizationCredentials] = None,
 ):
     token = settings.api_key
     if not token:
